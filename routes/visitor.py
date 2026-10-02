@@ -10,6 +10,7 @@ from database import get_db
 import models
 import schemas
 import auth as auth_utils
+from geofencing import haversine_distance_m
 
 router = APIRouter(prefix="/visitors", tags=["Visitors"])
 
@@ -187,7 +188,10 @@ def push_location(payload: schemas.LocationUpdate, db: Session = Depends(get_db)
     visitor = db.query(models.Visitor).filter(models.Visitor.visitor_id == visitor_id).first()
     if not visitor:
         raise HTTPException(status_code=404, detail="Visitor not found")
+    if visitor.status == "Exited":
+        raise HTTPException(status_code=403, detail="Location tracking has ended for this visit")
 
+    now = datetime.utcnow()
     loc = models.Location(
         visitor_id=visitor_id,
         latitude=payload.latitude,
@@ -195,10 +199,48 @@ def push_location(payload: schemas.LocationUpdate, db: Session = Depends(get_db)
         accuracy=payload.accuracy,
         speed=payload.speed,
         heading=payload.heading,
-        timestamp=datetime.utcnow(),
+        timestamp=now,
         source="GPS",
     )
     db.add(loc)
+    db.flush()
+
+    receivers = db.query(models.LocationReceiver).filter(
+        models.LocationReceiver.status == "active"
+    ).all()
+    for receiver in receivers:
+        distance_m = haversine_distance_m(
+            payload.latitude, payload.longitude, receiver.latitude, receiver.longitude
+        )
+        inside = distance_m <= receiver.radius_m
+        state = db.query(models.VisitorGeofenceState).filter(
+            models.VisitorGeofenceState.visitor_id == visitor_id,
+            models.VisitorGeofenceState.receiver_id == receiver.id,
+        ).first()
+        entered = inside and (state is None or not state.is_inside)
+        if state is None:
+            state = models.VisitorGeofenceState(
+                visitor_id=visitor_id,
+                receiver_id=receiver.id,
+                is_inside=inside,
+                updated_at=now,
+            )
+            db.add(state)
+        else:
+            state.is_inside = inside
+            state.updated_at = now
+
+        if entered:
+            db.add(models.VisitorLocationLog(
+                visitor_id=visitor_id,
+                receiver_id=receiver.id,
+                timestamp=now,
+                latitude=payload.latitude,
+                longitude=payload.longitude,
+                distance_m=round(distance_m, 2),
+                detected_via="GPS",
+            ))
+
     db.commit()
     db.refresh(loc)
     return loc

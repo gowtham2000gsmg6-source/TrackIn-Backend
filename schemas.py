@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr, Field
-from typing import Optional, List
+from typing import Optional, List, Literal
 from datetime import datetime
 
 # Auth schemas
@@ -31,9 +31,9 @@ class VisitorRegisterResponse(BaseModel):
 
 # Location Update schemas
 class LocationUpdate(BaseModel):
-    latitude: float
-    longitude: float
-    accuracy: float
+    latitude: float = Field(..., ge=-90, le=90)
+    longitude: float = Field(..., ge=-180, le=180)
+    accuracy: float = Field(..., ge=0)
     speed: Optional[float] = None
     heading: Optional[float] = None
 
@@ -119,3 +119,70 @@ class AnalyticsResponse(BaseModel):
     visits_by_department: List[DepartmentStats]
     visits_by_hour: List[HourlyVisitStats]
     average_duration_minutes: float
+
+
+class ReceiverLogin(BaseModel):
+    receiver_id: int = Field(..., ge=1)
+    pin: str = Field(..., min_length=6, max_length=12, pattern=r"^\d+$")
+
+
+class ReceiverSessionResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    role: str = "receiver"
+    receiver_id: int
+    name: str
+    latitude: float
+    longitude: float
+    radius_m: float
+    is_restricted: bool
+    status: str
+
+
+class LocationReceiverCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+    latitude: float = Field(..., ge=-90, le=90)
+    longitude: float = Field(..., ge=-180, le=180)
+    radius_m: float = Field(..., gt=0, le=10000)
+    is_restricted: bool = False
+    pin: str = Field(..., min_length=6, max_length=12, pattern=r"^\d+$")
+
+
+class LocationReceiverUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=120)
+    latitude: Optional[float] = Field(None, ge=-90, le=90)
+    longitude: Optional[float] = Field(None, ge=-180, le=180)
+    radius_m: Optional[float] = Field(None, gt=0, le=10000)
+    is_restricted: Optional[bool] = None
+    status: Optional[Literal["active", "inactive"]] = None
+    pin: Optional[str] = Field(None, min_length=6, max_length=12, pattern=r"^\d+$")
+
+
+class LocationReceiverResponse(BaseModel):
+    id: int
+    name: str
+    latitude: float
+    longitude: float
+    radius_m: float
+    is_restricted: bool
+    status: str
+    last_seen_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class VisitorLocationLogResponse(BaseModel):
+    id: int
+    visitor_id: str
+    receiver_id: int
+    receiver_name: str
+    timestamp: datetime
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    distance_m: Optional[float] = None
+    detected_via: Literal["GPS", "Bluetooth"]
+
+
+class BluetoothDetection(BaseModel):
+    visitor_id: str = Field(..., min_length=1, max_length=64)

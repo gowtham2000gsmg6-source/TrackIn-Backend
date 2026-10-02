@@ -77,3 +77,12 @@ def get_current_visitor(credentials: HTTPAuthorizationCredentials = Depends(secu
             detail="Not authorized as visitor",
         )
     return payload
+
+def get_current_receiver(credentials: HTTPAuthorizationCredentials = Depends(security)) -> Dict:
+    payload = verify_token(credentials.credentials)
+    if payload.get("role") != "receiver":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized as a location receiver",
+        )
+    return payload

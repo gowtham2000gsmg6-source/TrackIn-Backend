@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Boolean
+from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Boolean, UniqueConstraint
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from database import Base
@@ -48,3 +48,41 @@ class Admin(Base):
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     username = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
+
+
+class LocationReceiver(Base):
+    __tablename__ = "location_receivers"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    name = Column(String, nullable=False)
+    latitude = Column(Float, nullable=False)
+    longitude = Column(Float, nullable=False)
+    radius_m = Column(Float, nullable=False)
+    is_restricted = Column(Boolean, default=False, nullable=False)
+    status = Column(String, default="active", nullable=False)
+    pin_hash = Column(String, nullable=False)
+    last_seen_at = Column(DateTime, nullable=True)
+
+
+class VisitorLocationLog(Base):
+    __tablename__ = "visitor_location_logs"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    visitor_id = Column(String, ForeignKey("visitors.visitor_id", ondelete="CASCADE"), nullable=False, index=True)
+    receiver_id = Column(Integer, ForeignKey("location_receivers.id", ondelete="CASCADE"), nullable=False, index=True)
+    timestamp = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
+    distance_m = Column(Float, nullable=True)
+    detected_via = Column(String, nullable=False)
+
+
+class VisitorGeofenceState(Base):
+    __tablename__ = "visitor_geofence_states"
+    __table_args__ = (UniqueConstraint("visitor_id", "receiver_id", name="uq_visitor_receiver_geofence"),)
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    visitor_id = Column(String, ForeignKey("visitors.visitor_id", ondelete="CASCADE"), nullable=False)
+    receiver_id = Column(Integer, ForeignKey("location_receivers.id", ondelete="CASCADE"), nullable=False)
+    is_inside = Column(Boolean, default=False, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)

@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
@@ -74,3 +74,106 @@ def analytics(db: Session = Depends(get_db), current_admin: dict = Depends(auth_
         visits_by_hour=visits_by_hour,
         average_duration_minutes=average_duration_minutes,
     )
+
+
+@router.get("/location-receivers", response_model=list[schemas.LocationReceiverResponse])
+def list_location_receivers(
+    db: Session = Depends(get_db),
+    current_admin: dict = Depends(auth_utils.get_current_admin),
+):
+    return db.query(models.LocationReceiver).order_by(models.LocationReceiver.name).all()
+
+
+@router.post(
+    "/location-receivers",
+    response_model=schemas.LocationReceiverResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_location_receiver(
+    payload: schemas.LocationReceiverCreate,
+    db: Session = Depends(get_db),
+    current_admin: dict = Depends(auth_utils.get_current_admin),
+):
+    if not payload.name.strip():
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Receiver name is required")
+    receiver = models.LocationReceiver(
+        name=payload.name.strip(),
+        latitude=payload.latitude,
+        longitude=payload.longitude,
+        radius_m=payload.radius_m,
+        is_restricted=payload.is_restricted,
+        pin_hash=auth_utils.hash_password(payload.pin),
+    )
+    db.add(receiver)
+    db.commit()
+    db.refresh(receiver)
+    return receiver
+
+
+@router.patch("/location-receivers/{receiver_id}", response_model=schemas.LocationReceiverResponse)
+def update_location_receiver(
+    receiver_id: int,
+    payload: schemas.LocationReceiverUpdate,
+    db: Session = Depends(get_db),
+    current_admin: dict = Depends(auth_utils.get_current_admin),
+):
+    receiver = db.query(models.LocationReceiver).filter(models.LocationReceiver.id == receiver_id).first()
+    if not receiver:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Location receiver not found")
+
+    updates = payload.model_dump(exclude_unset=True)
+    pin = updates.pop("pin", None)
+    if any(value is None for value in updates.values()):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Receiver update values cannot be null",
+        )
+    if "name" in updates and not updates["name"].strip():
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Receiver name is required")
+    for field, value in updates.items():
+        setattr(receiver, field, value.strip() if field == "name" else value)
+    if pin is not None:
+        receiver.pin_hash = auth_utils.hash_password(pin)
+    if updates.get("status") == "inactive":
+        db.query(models.VisitorGeofenceState).filter(
+            models.VisitorGeofenceState.receiver_id == receiver.id
+        ).update(
+            {
+                models.VisitorGeofenceState.is_inside: False,
+                models.VisitorGeofenceState.updated_at: datetime.utcnow(),
+            },
+            synchronize_session=False,
+        )
+    db.commit()
+    db.refresh(receiver)
+    return receiver
+
+
+@router.get("/visitor-location-logs", response_model=list[schemas.VisitorLocationLogResponse])
+def visitor_location_logs(
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    current_admin: dict = Depends(auth_utils.get_current_admin),
+):
+    limit = min(max(limit, 1), 500)
+    rows = (
+        db.query(models.VisitorLocationLog, models.LocationReceiver.name)
+        .join(models.LocationReceiver, models.VisitorLocationLog.receiver_id == models.LocationReceiver.id)
+        .order_by(models.VisitorLocationLog.timestamp.desc())
+        .limit(limit)
+        .all()
+    )
+    return [
+        schemas.VisitorLocationLogResponse(
+            id=log.id,
+            visitor_id=log.visitor_id,
+            receiver_id=log.receiver_id,
+            receiver_name=receiver_name,
+            timestamp=log.timestamp,
+            latitude=log.latitude,
+            longitude=log.longitude,
+            distance_m=log.distance_m,
+            detected_via=log.detected_via,
+        )
+        for log, receiver_name in rows
+    ]
