@@ -84,6 +84,13 @@ class VisitorResponse(BaseModel):
     class Config:
         from_attributes = True
 
+class NearbyBluetoothDevice(BaseModel):
+    receiver_id: int
+    receiver_name: str
+    rssi: int
+    last_seen_at: datetime
+
+
 class LiveVisitorResponse(BaseModel):
     visitor_id: str
     full_name: str
@@ -97,9 +104,7 @@ class LiveVisitorResponse(BaseModel):
     last_updated: Optional[datetime] = None
     gps_enabled: bool
     bluetooth_enabled: bool
-    bluetooth_device_name: Optional[str] = None
-    bluetooth_device_active: bool = False
-    bluetooth_last_seen: Optional[datetime] = None
+    nearby_bluetooth: List[NearbyBluetoothDevice] = Field(default_factory=list)
 
 # Admin Dashboard schemas
 class DashboardStats(BaseModel):
@@ -188,15 +193,19 @@ class VisitorLocationLogResponse(BaseModel):
 
 
 class BluetoothDetection(BaseModel):
-    visitor_id: str = Field(..., min_length=1, max_length=64)
+    beacon_token: str = Field(..., min_length=16, max_length=32, pattern=r"^[A-Za-z0-9_-]+$")
+    rssi: int = Field(..., ge=-127, le=20)
 
 
-class BluetoothDeviceUpdate(BaseModel):
-    device_name: str = Field(..., min_length=1, max_length=100)
+class BeaconTokenResponse(BaseModel):
+    beacon_token: str
+    expires_at: datetime
 
 
-class BluetoothDeviceResponse(BaseModel):
+class BluetoothDetectionResponse(BaseModel):
     visitor_id: str
-    device_name: str
-    is_active: bool
+    receiver_id: int
+    receiver_name: str
+    rssi: int
     last_seen_at: datetime
+    recorded_entry: bool

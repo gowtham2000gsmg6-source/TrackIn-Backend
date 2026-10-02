@@ -26,12 +26,17 @@ def dashboard(db: Session = Depends(get_db), current_admin: dict = Depends(auth_
     live_visitors = []
     for v in live:
         last_loc = max(v.locations, key=lambda l: l.timestamp) if v.locations else None
-        bluetooth_device = v.bluetooth_device
-        bluetooth_fresh = bool(
-            bluetooth_device
-            and bluetooth_device.is_active
-            and bluetooth_device.last_seen_at >= datetime.utcnow() - timedelta(seconds=90)
-        )
+        cutoff = datetime.utcnow() - timedelta(seconds=90)
+        nearby_bluetooth = [
+            schemas.NearbyBluetoothDevice(
+                receiver_id=presence.receiver_id,
+                receiver_name=presence.receiver.name,
+                rssi=presence.rssi,
+                last_seen_at=presence.last_seen_at,
+            )
+            for presence in v.bluetooth_presence
+            if presence.last_seen_at >= cutoff
+        ]
         live_visitors.append(schemas.LiveVisitorResponse(
             visitor_id=v.visitor_id,
             full_name=v.full_name,
@@ -45,9 +50,7 @@ def dashboard(db: Session = Depends(get_db), current_admin: dict = Depends(auth_
             last_updated=last_loc.timestamp if last_loc else None,
             gps_enabled=v.gps_enabled,
             bluetooth_enabled=v.bluetooth_enabled,
-            bluetooth_device_name=bluetooth_device.device_name if bluetooth_device else None,
-            bluetooth_device_active=bluetooth_fresh,
-            bluetooth_last_seen=bluetooth_device.last_seen_at if bluetooth_device else None,
+            nearby_bluetooth=nearby_bluetooth,
         ))
 
     return schemas.DashboardStats(

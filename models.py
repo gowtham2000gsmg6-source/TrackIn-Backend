@@ -21,15 +21,14 @@ class Visitor(Base):
     
     # Security alerts flags
     gps_enabled = Column(Boolean, default=True, nullable=False)
-    bluetooth_enabled = Column(Boolean, default=True, nullable=False)
+    bluetooth_enabled = Column(Boolean, default=False, nullable=False)
 
     # Relationships
     locations = relationship("Location", back_populates="visitor", cascade="all, delete-orphan")
-    bluetooth_device = relationship(
-        "VisitorBluetoothDevice",
+    bluetooth_presence = relationship(
+        "VisitorBluetoothPresence",
         back_populates="visitor",
         cascade="all, delete-orphan",
-        uselist=False,
     )
 
 class Location(Base):
@@ -49,20 +48,29 @@ class Location(Base):
     visitor = relationship("Visitor", back_populates="locations")
 
 
-class VisitorBluetoothDevice(Base):
-    __tablename__ = "visitor_bluetooth_devices"
+class VisitorBeaconToken(Base):
+    __tablename__ = "visitor_beacon_tokens"
 
-    visitor_id = Column(
-        String,
-        ForeignKey("visitors.visitor_id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    device_name = Column(String, nullable=False)
-    is_active = Column(Boolean, default=True, nullable=False)
+    token_hash = Column(String, primary_key=True)
+    visitor_id = Column(String, ForeignKey("visitors.visitor_id", ondelete="CASCADE"), nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    expires_at = Column(DateTime, nullable=False, index=True)
+
+    visitor = relationship("Visitor")
+
+
+class VisitorBluetoothPresence(Base):
+    __tablename__ = "visitor_bluetooth_presence"
+    __table_args__ = (UniqueConstraint("visitor_id", "receiver_id", name="uq_visitor_receiver_ble_presence"),)
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    visitor_id = Column(String, ForeignKey("visitors.visitor_id", ondelete="CASCADE"), nullable=False, index=True)
+    receiver_id = Column(Integer, ForeignKey("location_receivers.id", ondelete="CASCADE"), nullable=False, index=True)
+    rssi = Column(Integer, nullable=False)
     last_seen_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
-    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
-    visitor = relationship("Visitor", back_populates="bluetooth_device")
+    visitor = relationship("Visitor", back_populates="bluetooth_presence")
+    receiver = relationship("LocationReceiver")
 
 
 class Admin(Base):

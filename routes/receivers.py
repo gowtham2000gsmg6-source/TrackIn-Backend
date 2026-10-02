@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+import hashlib
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -72,40 +73,55 @@ def receiver_heartbeat(
     return receiver
 
 
-@router.post("/bluetooth-detections", response_model=schemas.VisitorLocationLogResponse)
+@router.post("/bluetooth-detections", response_model=schemas.BluetoothDetectionResponse)
 def bluetooth_detection(
     payload: schemas.BluetoothDetection,
     current_receiver: dict = Depends(auth_utils.get_current_receiver),
     db: Session = Depends(get_db),
 ):
     receiver = _get_active_receiver(_receiver_id(current_receiver), db)
+    now = datetime.utcnow()
+    token_hash = hashlib.sha256(payload.beacon_token.encode("ascii")).hexdigest()
+    beacon = db.query(models.VisitorBeaconToken).filter(
+        models.VisitorBeaconToken.token_hash == token_hash,
+        models.VisitorBeaconToken.expires_at > now,
+    ).first()
+    if not beacon:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Beacon expired or not recognized")
     visitor = db.query(models.Visitor).filter(
-        models.Visitor.visitor_id == payload.visitor_id
+        models.Visitor.visitor_id == beacon.visitor_id
     ).first()
     if not visitor or visitor.status == "Exited":
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Active visitor not found")
 
-    now = datetime.utcnow()
-    previous = db.query(models.VisitorLocationLog).filter(
-        models.VisitorLocationLog.visitor_id == visitor.visitor_id,
-        models.VisitorLocationLog.receiver_id == receiver.id,
-        models.VisitorLocationLog.detected_via == "Bluetooth",
-        models.VisitorLocationLog.timestamp >= now - timedelta(seconds=60),
-    ).order_by(models.VisitorLocationLog.timestamp.desc()).first()
-    if previous:
-        log = previous
+    presence = db.query(models.VisitorBluetoothPresence).filter(
+        models.VisitorBluetoothPresence.visitor_id == visitor.visitor_id,
+        models.VisitorBluetoothPresence.receiver_id == receiver.id,
+    ).first()
+    entered = presence is None or presence.last_seen_at < now - timedelta(seconds=90)
+    if presence is None:
+        presence = models.VisitorBluetoothPresence(
+            visitor_id=visitor.visitor_id,
+            receiver_id=receiver.id,
+            rssi=payload.rssi,
+            last_seen_at=now,
+        )
+        db.add(presence)
     else:
+        presence.rssi = payload.rssi
+        presence.last_seen_at = now
+
+    if entered:
         last_location = db.query(models.Location).filter(
             models.Location.visitor_id == visitor.visitor_id
         ).order_by(models.Location.timestamp.desc()).first()
-        distance_m = None
-        latitude = longitude = None
+        latitude = longitude = distance_m = None
         if last_location and last_location.timestamp >= now - timedelta(minutes=2):
             latitude, longitude = last_location.latitude, last_location.longitude
             distance_m = round(haversine_distance_m(
                 latitude, longitude, receiver.latitude, receiver.longitude
             ), 2)
-        log = models.VisitorLocationLog(
+        db.add(models.VisitorLocationLog(
             visitor_id=visitor.visitor_id,
             receiver_id=receiver.id,
             timestamp=now,
@@ -113,33 +129,14 @@ def bluetooth_detection(
             longitude=longitude,
             distance_m=distance_m,
             detected_via="Bluetooth",
-        )
-        db.add(log)
-        state = db.query(models.VisitorGeofenceState).filter(
-            models.VisitorGeofenceState.visitor_id == visitor.visitor_id,
-            models.VisitorGeofenceState.receiver_id == receiver.id,
-        ).first()
-        if state:
-            state.is_inside = True
-            state.updated_at = now
-        else:
-            db.add(models.VisitorGeofenceState(
-                visitor_id=visitor.visitor_id,
-                receiver_id=receiver.id,
-                is_inside=True,
-                updated_at=now,
-            ))
-        db.commit()
-        db.refresh(log)
+        ))
+    db.commit()
 
-    return schemas.VisitorLocationLogResponse(
-        id=log.id,
-        visitor_id=log.visitor_id,
-        receiver_id=log.receiver_id,
+    return schemas.BluetoothDetectionResponse(
+        visitor_id=visitor.visitor_id,
+        receiver_id=receiver.id,
         receiver_name=receiver.name,
-        timestamp=log.timestamp,
-        latitude=log.latitude,
-        longitude=log.longitude,
-        distance_m=log.distance_m,
-        detected_via=log.detected_via,
+        rssi=payload.rssi,
+        last_seen_at=now,
+        recorded_entry=entered,
     )

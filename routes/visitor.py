@@ -1,4 +1,6 @@
 import uuid
+import hashlib
+import secrets
 from datetime import datetime, timedelta
 from typing import Optional, List
 
@@ -29,12 +31,17 @@ def _next_visitor_id(db: Session) -> str:
 
 def _to_live_response(v: models.Visitor) -> schemas.LiveVisitorResponse:
     last_loc = max(v.locations, key=lambda l: l.timestamp) if v.locations else None
-    bluetooth_device = v.bluetooth_device
-    bluetooth_fresh = bool(
-        bluetooth_device
-        and bluetooth_device.is_active
-        and bluetooth_device.last_seen_at >= datetime.utcnow() - timedelta(seconds=90)
-    )
+    cutoff = datetime.utcnow() - timedelta(seconds=90)
+    nearby_bluetooth = [
+        schemas.NearbyBluetoothDevice(
+            receiver_id=presence.receiver_id,
+            receiver_name=presence.receiver.name,
+            rssi=presence.rssi,
+            last_seen_at=presence.last_seen_at,
+        )
+        for presence in v.bluetooth_presence
+        if presence.last_seen_at >= cutoff
+    ]
     return schemas.LiveVisitorResponse(
         visitor_id=v.visitor_id,
         full_name=v.full_name,
@@ -48,9 +55,7 @@ def _to_live_response(v: models.Visitor) -> schemas.LiveVisitorResponse:
         last_updated=last_loc.timestamp if last_loc else None,
         gps_enabled=v.gps_enabled,
         bluetooth_enabled=v.bluetooth_enabled,
-        bluetooth_device_name=bluetooth_device.device_name if bluetooth_device else None,
-        bluetooth_device_active=bluetooth_fresh,
-        bluetooth_last_seen=bluetooth_device.last_seen_at if bluetooth_device else None,
+        nearby_bluetooth=nearby_bluetooth,
     )
 
 
@@ -109,9 +114,9 @@ def check_out(visitor_id: str, db: Session = Depends(get_db),
     visitor.exit_time = datetime.utcnow()
     visitor.status = "Exited"
     visitor.bluetooth_enabled = False
-    if visitor.bluetooth_device:
-        visitor.bluetooth_device.is_active = False
-        visitor.bluetooth_device.updated_at = datetime.utcnow()
+    db.query(models.VisitorBeaconToken).filter(
+        models.VisitorBeaconToken.visitor_id == visitor_id
+    ).delete(synchronize_session=False)
     db.commit()
     db.refresh(visitor)
     return visitor
@@ -259,9 +264,8 @@ def push_location(payload: schemas.LocationUpdate, db: Session = Depends(get_db)
     return loc
 
 
-@router.put("/bluetooth-device", response_model=schemas.BluetoothDeviceResponse)
-def update_bluetooth_device(
-    payload: schemas.BluetoothDeviceUpdate,
+@router.post("/beacon-token", response_model=schemas.BeaconTokenResponse)
+def issue_beacon_token(
     db: Session = Depends(get_db),
     current_visitor: dict = Depends(auth_utils.get_current_visitor),
 ):
@@ -270,43 +274,35 @@ def update_bluetooth_device(
     if not visitor:
         raise HTTPException(status_code=404, detail="Visitor not found")
     if visitor.status == "Exited":
-        raise HTTPException(status_code=403, detail="Bluetooth reporting has ended for this visit")
-    device_name = payload.device_name.strip()
-    if not device_name:
-        raise HTTPException(status_code=422, detail="Bluetooth device name is required")
+        raise HTTPException(status_code=403, detail="Bluetooth advertising has ended for this visit")
 
     now = datetime.utcnow()
-    device = visitor.bluetooth_device
-    if device is None:
-        device = models.VisitorBluetoothDevice(visitor_id=visitor_id, device_name=device_name)
-        db.add(device)
-    device.device_name = device_name
-    device.is_active = True
-    device.last_seen_at = now
-    device.updated_at = now
+    expires_at = now + timedelta(minutes=2)
+    beacon_token = secrets.token_urlsafe(12)
+    db.query(models.VisitorBeaconToken).filter(
+        models.VisitorBeaconToken.visitor_id == visitor_id,
+        models.VisitorBeaconToken.expires_at < now,
+    ).delete(synchronize_session=False)
+    db.add(models.VisitorBeaconToken(
+        token_hash=hashlib.sha256(beacon_token.encode("ascii")).hexdigest(),
+        visitor_id=visitor_id,
+        created_at=now,
+        expires_at=expires_at,
+    ))
     visitor.bluetooth_enabled = True
     db.commit()
-    db.refresh(device)
-    return schemas.BluetoothDeviceResponse(
-        visitor_id=device.visitor_id,
-        device_name=device.device_name,
-        is_active=device.is_active,
-        last_seen_at=device.last_seen_at,
-    )
+    return schemas.BeaconTokenResponse(beacon_token=beacon_token, expires_at=expires_at)
 
 
-@router.delete("/bluetooth-device", status_code=status.HTTP_204_NO_CONTENT)
-def stop_bluetooth_device(
+@router.delete("/beacon-token", status_code=status.HTTP_204_NO_CONTENT)
+def revoke_beacon_tokens(
     db: Session = Depends(get_db),
     current_visitor: dict = Depends(auth_utils.get_current_visitor),
 ):
     visitor_id = current_visitor.get("sub")
-    device = db.query(models.VisitorBluetoothDevice).filter(
-        models.VisitorBluetoothDevice.visitor_id == visitor_id
-    ).first()
-    if device:
-        device.is_active = False
-        device.updated_at = datetime.utcnow()
+    db.query(models.VisitorBeaconToken).filter(
+        models.VisitorBeaconToken.visitor_id == visitor_id
+    ).delete(synchronize_session=False)
     visitor = db.query(models.Visitor).filter(models.Visitor.visitor_id == visitor_id).first()
     if visitor:
         visitor.bluetooth_enabled = False
