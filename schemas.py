@@ -97,6 +97,9 @@ class LiveVisitorResponse(BaseModel):
     last_updated: Optional[datetime] = None
     gps_enabled: bool
     bluetooth_enabled: bool
+    bluetooth_device_name: Optional[str] = None
+    bluetooth_device_active: bool = False
+    bluetooth_last_seen: Optional[datetime] = None
 
 # Admin Dashboard schemas
 class DashboardStats(BaseModel):
@@ -186,3 +189,14 @@ class VisitorLocationLogResponse(BaseModel):
 
 class BluetoothDetection(BaseModel):
     visitor_id: str = Field(..., min_length=1, max_length=64)
+
+
+class BluetoothDeviceUpdate(BaseModel):
+    device_name: str = Field(..., min_length=1, max_length=100)
+
+
+class BluetoothDeviceResponse(BaseModel):
+    visitor_id: str
+    device_name: str
+    is_active: bool
+    last_seen_at: datetime

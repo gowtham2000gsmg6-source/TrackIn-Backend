@@ -25,6 +25,12 @@ class Visitor(Base):
 
     # Relationships
     locations = relationship("Location", back_populates="visitor", cascade="all, delete-orphan")
+    bluetooth_device = relationship(
+        "VisitorBluetoothDevice",
+        back_populates="visitor",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
 
 class Location(Base):
     __tablename__ = "locations"
@@ -41,6 +47,23 @@ class Location(Base):
 
     # Relationships
     visitor = relationship("Visitor", back_populates="locations")
+
+
+class VisitorBluetoothDevice(Base):
+    __tablename__ = "visitor_bluetooth_devices"
+
+    visitor_id = Column(
+        String,
+        ForeignKey("visitors.visitor_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    device_name = Column(String, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    last_seen_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    visitor = relationship("Visitor", back_populates="bluetooth_device")
+
 
 class Admin(Base):
     __tablename__ = "admins"

@@ -29,6 +29,12 @@ def _next_visitor_id(db: Session) -> str:
 
 def _to_live_response(v: models.Visitor) -> schemas.LiveVisitorResponse:
     last_loc = max(v.locations, key=lambda l: l.timestamp) if v.locations else None
+    bluetooth_device = v.bluetooth_device
+    bluetooth_fresh = bool(
+        bluetooth_device
+        and bluetooth_device.is_active
+        and bluetooth_device.last_seen_at >= datetime.utcnow() - timedelta(seconds=90)
+    )
     return schemas.LiveVisitorResponse(
         visitor_id=v.visitor_id,
         full_name=v.full_name,
@@ -42,6 +48,9 @@ def _to_live_response(v: models.Visitor) -> schemas.LiveVisitorResponse:
         last_updated=last_loc.timestamp if last_loc else None,
         gps_enabled=v.gps_enabled,
         bluetooth_enabled=v.bluetooth_enabled,
+        bluetooth_device_name=bluetooth_device.device_name if bluetooth_device else None,
+        bluetooth_device_active=bluetooth_fresh,
+        bluetooth_last_seen=bluetooth_device.last_seen_at if bluetooth_device else None,
     )
 
 
@@ -99,6 +108,10 @@ def check_out(visitor_id: str, db: Session = Depends(get_db),
 
     visitor.exit_time = datetime.utcnow()
     visitor.status = "Exited"
+    visitor.bluetooth_enabled = False
+    if visitor.bluetooth_device:
+        visitor.bluetooth_device.is_active = False
+        visitor.bluetooth_device.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(visitor)
     return visitor
@@ -244,6 +257,60 @@ def push_location(payload: schemas.LocationUpdate, db: Session = Depends(get_db)
     db.commit()
     db.refresh(loc)
     return loc
+
+
+@router.put("/bluetooth-device", response_model=schemas.BluetoothDeviceResponse)
+def update_bluetooth_device(
+    payload: schemas.BluetoothDeviceUpdate,
+    db: Session = Depends(get_db),
+    current_visitor: dict = Depends(auth_utils.get_current_visitor),
+):
+    visitor_id = current_visitor.get("sub")
+    visitor = db.query(models.Visitor).filter(models.Visitor.visitor_id == visitor_id).first()
+    if not visitor:
+        raise HTTPException(status_code=404, detail="Visitor not found")
+    if visitor.status == "Exited":
+        raise HTTPException(status_code=403, detail="Bluetooth reporting has ended for this visit")
+    device_name = payload.device_name.strip()
+    if not device_name:
+        raise HTTPException(status_code=422, detail="Bluetooth device name is required")
+
+    now = datetime.utcnow()
+    device = visitor.bluetooth_device
+    if device is None:
+        device = models.VisitorBluetoothDevice(visitor_id=visitor_id, device_name=device_name)
+        db.add(device)
+    device.device_name = device_name
+    device.is_active = True
+    device.last_seen_at = now
+    device.updated_at = now
+    visitor.bluetooth_enabled = True
+    db.commit()
+    db.refresh(device)
+    return schemas.BluetoothDeviceResponse(
+        visitor_id=device.visitor_id,
+        device_name=device.device_name,
+        is_active=device.is_active,
+        last_seen_at=device.last_seen_at,
+    )
+
+
+@router.delete("/bluetooth-device", status_code=status.HTTP_204_NO_CONTENT)
+def stop_bluetooth_device(
+    db: Session = Depends(get_db),
+    current_visitor: dict = Depends(auth_utils.get_current_visitor),
+):
+    visitor_id = current_visitor.get("sub")
+    device = db.query(models.VisitorBluetoothDevice).filter(
+        models.VisitorBluetoothDevice.visitor_id == visitor_id
+    ).first()
+    if device:
+        device.is_active = False
+        device.updated_at = datetime.utcnow()
+    visitor = db.query(models.Visitor).filter(models.Visitor.visitor_id == visitor_id).first()
+    if visitor:
+        visitor.bluetooth_enabled = False
+    db.commit()
 
 
 @router.get("/live/all", response_model=List[schemas.LiveVisitorResponse])

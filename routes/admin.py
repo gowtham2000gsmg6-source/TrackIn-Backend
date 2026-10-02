@@ -26,6 +26,12 @@ def dashboard(db: Session = Depends(get_db), current_admin: dict = Depends(auth_
     live_visitors = []
     for v in live:
         last_loc = max(v.locations, key=lambda l: l.timestamp) if v.locations else None
+        bluetooth_device = v.bluetooth_device
+        bluetooth_fresh = bool(
+            bluetooth_device
+            and bluetooth_device.is_active
+            and bluetooth_device.last_seen_at >= datetime.utcnow() - timedelta(seconds=90)
+        )
         live_visitors.append(schemas.LiveVisitorResponse(
             visitor_id=v.visitor_id,
             full_name=v.full_name,
@@ -39,6 +45,9 @@ def dashboard(db: Session = Depends(get_db), current_admin: dict = Depends(auth_
             last_updated=last_loc.timestamp if last_loc else None,
             gps_enabled=v.gps_enabled,
             bluetooth_enabled=v.bluetooth_enabled,
+            bluetooth_device_name=bluetooth_device.device_name if bluetooth_device else None,
+            bluetooth_device_active=bluetooth_fresh,
+            bluetooth_last_seen=bluetooth_device.last_seen_at if bluetooth_device else None,
         ))
 
     return schemas.DashboardStats(
