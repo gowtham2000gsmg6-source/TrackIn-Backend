@@ -21,7 +21,11 @@ app = FastAPI(
 # Auth here uses a Bearer token (not cookies), so allow_credentials can stay
 # False - that's what lets us safely support multiple explicit origins.
 _origins_env = os.getenv("ALLOWED_ORIGINS", "")
-allowed_origins = [o.strip() for o in _origins_env.split(",") if o.strip()] or ["*"]
+allowed_origins = [
+    origin.strip().strip("\"'").rstrip("/")
+    for origin in _origins_env.split(",")
+    if origin.strip().strip("\"'").rstrip("/")
+] or ["*"]
 
 app.add_middleware(
     CORSMiddleware,
