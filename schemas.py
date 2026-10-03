@@ -22,6 +22,7 @@ class VisitorRegister(BaseModel):
     purpose: str
     device_info: Optional[str] = None
     browser_info: Optional[str] = None
+    restricted_sms_consent: bool = False
 
 class VisitorRegisterResponse(BaseModel):
     visitor_id: str
@@ -37,6 +38,12 @@ class LocationUpdate(BaseModel):
     speed: Optional[float] = None
     heading: Optional[float] = None
 
+class RestrictedAreaEntry(BaseModel):
+    receiver_id: int
+    receiver_name: str
+    distance_m: float
+
+
 class LocationResponse(BaseModel):
     visitor_id: str
     latitude: float
@@ -46,10 +53,10 @@ class LocationResponse(BaseModel):
     heading: Optional[float] = None
     timestamp: datetime
     source: str
+    restricted_area_entries: List[RestrictedAreaEntry] = Field(default_factory=list)
 
     class Config:
         from_attributes = True
-
 # Future BLE Location Schema Placeholder
 class BLELocationUpdate(BaseModel):
     beacon_uuid: str

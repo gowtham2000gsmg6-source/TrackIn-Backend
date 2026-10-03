@@ -22,6 +22,7 @@ class Visitor(Base):
     # Security alerts flags
     gps_enabled = Column(Boolean, default=True, nullable=False)
     bluetooth_enabled = Column(Boolean, default=False, nullable=False)
+    restricted_sms_consent = Column(Boolean, default=False, nullable=False)
 
     # Relationships
     locations = relationship("Location", back_populates="visitor", cascade="all, delete-orphan")

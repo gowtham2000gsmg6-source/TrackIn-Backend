@@ -13,6 +13,7 @@ import models
 import schemas
 import auth as auth_utils
 from geofencing import haversine_distance_m
+from sms_notifications import send_restricted_area_sms
 
 router = APIRouter(prefix="/visitors", tags=["Visitors"])
 
@@ -185,6 +186,7 @@ def self_register(payload: schemas.VisitorRegister, db: Session = Depends(get_db
         status="Pending Entry",
         device_info=payload.device_info,
         browser_info=payload.browser_info,
+        restricted_sms_consent=payload.restricted_sms_consent,
     )
     db.add(visitor)
     db.commit()
@@ -226,6 +228,7 @@ def push_location(payload: schemas.LocationUpdate, db: Session = Depends(get_db)
     receivers = db.query(models.LocationReceiver).filter(
         models.LocationReceiver.status == "active"
     ).all()
+    restricted_entries = []
     for receiver in receivers:
         distance_m = haversine_distance_m(
             payload.latitude, payload.longitude, receiver.latitude, receiver.longitude
@@ -249,6 +252,14 @@ def push_location(payload: schemas.LocationUpdate, db: Session = Depends(get_db)
             state.updated_at = now
 
         if entered:
+            if receiver.is_restricted:
+                restricted_entries.append(
+                    schemas.RestrictedAreaEntry(
+                        receiver_id=receiver.id,
+                        receiver_name=receiver.name,
+                        distance_m=round(distance_m, 2),
+                    )
+                )
             db.add(models.VisitorLocationLog(
                 visitor_id=visitor_id,
                 receiver_id=receiver.id,
@@ -261,7 +272,21 @@ def push_location(payload: schemas.LocationUpdate, db: Session = Depends(get_db)
 
     db.commit()
     db.refresh(loc)
-    return loc
+    if visitor.restricted_sms_consent:
+        for entry in restricted_entries:
+            send_restricted_area_sms(visitor, entry.receiver_name)
+
+    return schemas.LocationResponse(
+        visitor_id=loc.visitor_id,
+        latitude=loc.latitude,
+        longitude=loc.longitude,
+        accuracy=loc.accuracy,
+        speed=loc.speed,
+        heading=loc.heading,
+        timestamp=loc.timestamp,
+        source=loc.source,
+        restricted_area_entries=restricted_entries,
+    )
 
 
 @router.post("/beacon-token", response_model=schemas.BeaconTokenResponse)
