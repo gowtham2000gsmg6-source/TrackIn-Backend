@@ -9,6 +9,7 @@ import auth as auth_utils
 import models
 import schemas
 from geofencing import haversine_distance_m
+from sms_notifications import send_restricted_area_sms
 
 router = APIRouter(prefix="/receivers", tags=["Location receivers"])
 
@@ -131,6 +132,9 @@ def bluetooth_detection(
             detected_via="Bluetooth",
         ))
     db.commit()
+
+    if entered and receiver.is_restricted and visitor.restricted_sms_consent:
+        send_restricted_area_sms(visitor, receiver.name)
 
     return schemas.BluetoothDetectionResponse(
         visitor_id=visitor.visitor_id,

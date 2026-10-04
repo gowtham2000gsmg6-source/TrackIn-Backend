@@ -76,6 +76,27 @@ def send_restricted_area_sms(visitor: models.Visitor, area_name: str) -> bool:
                     response.status,
                 )
                 return False
+            response_body = response.read().decode("utf-8").strip()
+        if response_body:
+            try:
+                provider_response = json.loads(response_body)
+            except json.JSONDecodeError:
+                logger.error(
+                    "MSG91 returned an unreadable response for visitor %s",
+                    visitor.visitor_id,
+                )
+                return False
+            response_type = provider_response.get("type") if isinstance(provider_response, dict) else None
+            if not isinstance(response_type, str) or response_type.lower() != "success":
+                message = "provider returned an unrecognized response"
+                if isinstance(provider_response, dict):
+                    message = provider_response.get("message", message)
+                logger.error(
+                    "MSG91 rejected restricted-area SMS for visitor %s: %s",
+                    visitor.visitor_id,
+                    message,
+                )
+                return False
         return True
     except HTTPError as error:
         logger.error(
