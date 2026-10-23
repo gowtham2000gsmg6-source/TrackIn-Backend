@@ -108,6 +108,7 @@ class LiveVisitorResponse(BaseModel):
     status: str
     last_latitude: Optional[float] = None
     last_longitude: Optional[float] = None
+    last_accuracy: Optional[float] = None
     last_updated: Optional[datetime] = None
     gps_enabled: bool
     bluetooth_enabled: bool

@@ -53,6 +53,7 @@ def _to_live_response(v: models.Visitor) -> schemas.LiveVisitorResponse:
         status=v.status,
         last_latitude=last_loc.latitude if last_loc else None,
         last_longitude=last_loc.longitude if last_loc else None,
+        last_accuracy=last_loc.accuracy if last_loc else None,
         last_updated=last_loc.timestamp if last_loc else None,
         gps_enabled=v.gps_enabled,
         bluetooth_enabled=v.bluetooth_enabled,
